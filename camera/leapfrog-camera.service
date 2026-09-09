@@ -1,0 +1,17 @@
+[Unit]
+Description=Leapfrog FaceTime camera compatibility relay
+Documentation=https://github.com/dreinecke/leapfrog
+ConditionPathExists=/dev/video0
+ConditionPathExists=/dev/video10
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/v4l2-ctl -d /dev/video10 --set-ctrl keep_format=0,sustain_framerate=0,timeout=0
+ExecStart=%h/.local/libexec/leapfrog-camera-relayd -i "v4l2src device=/dev/video0 do-timestamp=true ! video/x-h264,width=1280,height=720,framerate=30/1 ! h264parse ! avdec_h264 ! videoconvert" -o "appsrc name=appsrc caps=video/x-raw,format=YUY2,width=1280,height=720,framerate=30/1 ! videoconvert ! v4l2sink name=v4l2sink device=/dev/video10"
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+
+[Install]
+WantedBy=graphical-session.target

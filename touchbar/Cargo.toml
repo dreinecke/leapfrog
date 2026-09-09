@@ -1,0 +1,19 @@
+[package]
+name = "leapfrog-touchbar"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Leapfrog's Omarchy-themed T1Bridge Touch Bar renderer"
+
+[dependencies]
+anyhow = "1.0"
+fontdue = "0.9"
+image = { version = "0.25", default-features = false, features = ["png"] }
+libc = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

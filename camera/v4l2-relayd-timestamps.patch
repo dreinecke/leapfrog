@@ -1,0 +1,34 @@
+diff --git a/src/v4l2-relayd.c b/src/v4l2-relayd.c
+index 6e7d6de..29b54b0 100644
+--- a/src/v4l2-relayd.c
++++ b/src/v4l2-relayd.c
+@@ -169,12 +169,17 @@ backend_appsink_new_sample (GstAppSink *appsink,
+   GstAppSrc *appsrc = (GstAppSrc *) user_data;
+   GstSample *sample;
+   GstBuffer *buffer;
++  GstClock *clock;
++  GstClockTime running_time;
+
+   sample = gst_app_sink_pull_sample (appsink);
+-  buffer = gst_sample_get_buffer (sample);
+-  /* gst_app_src_push_buffer wants to take the ownership of the buffer,
+-   * so it must hold an additional reference first. */
+-  gst_buffer_ref (buffer);
++  buffer = gst_buffer_copy (gst_sample_get_buffer (sample));
++  clock = gst_element_get_clock (output_pipeline);
++  running_time = gst_clock_get_time (clock) -
++                 gst_element_get_base_time (output_pipeline);
++  gst_object_unref (clock);
++  GST_BUFFER_PTS (buffer) = running_time;
++  GST_BUFFER_DTS (buffer) = GST_CLOCK_TIME_NONE;
+   gst_app_src_push_buffer (appsrc, buffer);
+   gst_sample_unref (sample);
+
+@@ -230,6 +235,7 @@ backend_pipeline_create (const gchar *name,
+                 "caps", caps,
+                 "drop", TRUE,
+                 "max-buffers", 4,
++                "sync", FALSE,
+                 "emit-signals", TRUE,
+                 NULL);
+   g_signal_connect_object (appsink,

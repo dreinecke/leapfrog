@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LEAPFROG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [ ! -d "$LEAPFROG_DIR/.git" ]; then
+  printf 'Leapfrog is not a Git checkout: %s\n' "$LEAPFROG_DIR" >&2
+  exit 1
+fi
+
+install -Dm755 "$LEAPFROG_DIR/hooks/post-commit" "$LEAPFROG_DIR/.git/hooks/post-commit"
+printf 'Installed the Leapfrog post-commit hook.\n'

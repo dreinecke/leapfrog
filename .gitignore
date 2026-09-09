@@ -1,0 +1,5 @@
+/touchbar/target/
+/theme-gallery/assets/
+/theme-gallery/themes.js
+*.png
+*.core

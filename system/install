@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SYSTEM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ "$(id -u)" -ne 0 ]; then
+  printf 'Run this from a visible terminal: sudo %s\n' "$0" >&2
+  exit 1
+fi
+
+[ -e /usr/lib/security/pam_fprintd.so ] || {
+  printf 'pam_fprintd.so is missing; install fprintd-t1bridge first.\n' >&2
+  exit 1
+}
+[ -x /usr/bin/omarchy-hw-laptop-closed ] || {
+  printf 'omarchy-hw-laptop-closed is missing; refusing to replace PAM files.\n' >&2
+  exit 1
+}
+
+stamp="$(date +%Y%m%d-%H%M%S)"
+backup_dir="/var/backups/leapfrog/$stamp"
+mkdir -p "$backup_dir/etc/pam.d" "$backup_dir/etc/modprobe.d" "$backup_dir/etc/t1bridge"
+
+for path in \
+  /etc/pam.d/sudo \
+  /etc/pam.d/polkit-1 \
+  /etc/pam.d/omarchy-lock-fingerprint \
+  /etc/modprobe.d/v4l2-relayd.conf \
+  /etc/t1bridge/diagnostics.conf; do
+  if [ -e "$path" ]; then
+    cp -a "$path" "$backup_dir$path"
+  fi
+done
+
+install -Dm644 "$SYSTEM_DIR/pam/sudo" /etc/pam.d/sudo
+install -Dm644 "$SYSTEM_DIR/pam/polkit-1" /etc/pam.d/polkit-1
+install -Dm644 "$SYSTEM_DIR/pam/omarchy-lock-fingerprint" /etc/pam.d/omarchy-lock-fingerprint
+install -Dm644 "$SYSTEM_DIR/modprobe/v4l2-relayd.conf" /etc/modprobe.d/v4l2-relayd.conf
+install -Dm644 "$SYSTEM_DIR/t1bridge/diagnostics.conf" /etc/t1bridge/diagnostics.conf
+
+printf '\nLeapfrog system configuration installed.\n'
+printf 'Backups: %s\n' "$backup_dir"
+printf 'Keep this root shell open until Touch ID and password fallback are tested.\n'
+printf 'To restore a file, copy its matching path from the backup directory.\n\n'
+exec /bin/bash --noprofile --norc

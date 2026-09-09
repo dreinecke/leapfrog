@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# A Leapfrog commit on Enterprise copies the checkout to Voyager through the
+# machine repo's existing ship-sync service. Everywhere else this is a no-op.
+[ "$(hostname)" = enterprise ] || exit 0
+[ -d "$HOME/code/enterprise/.git" ] || exit 0
+systemctl --user start --no-block ship-sync@voyager.service 2>/dev/null || true
+exit 0

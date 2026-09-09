@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LEAPFROG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+cargo fmt --manifest-path "$LEAPFROG_DIR/touchbar/Cargo.toml" --check
+cargo clippy --manifest-path "$LEAPFROG_DIR/touchbar/Cargo.toml" --all-targets -- -D warnings
+cargo test --manifest-path "$LEAPFROG_DIR/touchbar/Cargo.toml"
+
+for script in \
+  "$LEAPFROG_DIR/install.sh" \
+  "$LEAPFROG_DIR/bin/leapfrog" \
+  "$LEAPFROG_DIR/camera/build-relay" \
+  "$LEAPFROG_DIR/hooks/install" \
+  "$LEAPFROG_DIR/hooks/post-commit" \
+  "$LEAPFROG_DIR/system/install"; do
+  bash -n "$script"
+done
+
+python3 - "$LEAPFROG_DIR/theme-gallery/generate_gallery.py" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+compile(source, sys.argv[1], "exec")
+PY
+
+printf 'Leapfrog checks passed.\n'

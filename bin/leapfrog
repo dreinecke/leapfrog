@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LEAPFROG_ROOT="${LEAPFROG_ROOT:-$HOME/code/leapfrog}"
+
+unit_state() {
+  if [ "$1" = user ]; then
+    systemctl --user is-active "$2" 2>/dev/null || true
+  else
+    systemctl is-active "$2" 2>/dev/null || true
+  fi
+}
+
+status() {
+  printf 'T1Bridge hardware: %s\n' "$(unit_state system t1-touchbar-hw.service)"
+  printf 'Leapfrog Touch Bar: %s\n' "$(unit_state user t1-touchbar.service)"
+  printf 'Leapfrog camera: %s\n' "$(unit_state user leapfrog-camera.service)"
+  printf 'Touch ID socket: %s\n' "$(unit_state system t1-touchid-auth.socket)"
+  printf 'Renderer: %s\n' "$(readlink "$HOME/.config/t1bridge/renderer" 2>/dev/null || printf 'stock')"
+  if command -v v4l2-ctl >/dev/null 2>&1; then
+    v4l2-ctl --list-devices 2>/dev/null || true
+  fi
+}
+
+case "${1:-status}" in
+  status)
+    status
+    ;;
+  preview)
+    output="${2:-/tmp/leapfrog-touchbar-preview.png}"
+    "$HOME/.local/bin/leapfrog-touchbar" preview "$output"
+    if command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "$output" >/dev/null 2>&1 &
+    fi
+    ;;
+  gallery)
+    [ -x "$LEAPFROG_ROOT/theme-gallery/generate_gallery.py" ] || {
+      printf 'Leapfrog checkout not found at %s\n' "$LEAPFROG_ROOT" >&2
+      exit 1
+    }
+    "$LEAPFROG_ROOT/theme-gallery/generate_gallery.py"
+    if command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "$LEAPFROG_ROOT/theme-gallery/index.html" >/dev/null 2>&1 &
+    fi
+    ;;
+  install)
+    exec "$LEAPFROG_ROOT/install.sh"
+    ;;
+  stock)
+    exec "$HOME/.local/bin/leapfrog-touchbar" stock
+    ;;
+  select)
+    exec "$HOME/.local/bin/leapfrog-touchbar" select
+    ;;
+  *)
+    printf 'Usage: leapfrog {status|preview [file]|gallery|install|stock|select}\n' >&2
+    exit 2
+    ;;
+esac
