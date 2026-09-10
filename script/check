@@ -13,9 +13,24 @@ for script in \
   "$LEAPFROG_DIR/camera/build-relay" \
   "$LEAPFROG_DIR/hooks/install" \
   "$LEAPFROG_DIR/hooks/post-commit" \
+  "$LEAPFROG_DIR/lock/install" \
   "$LEAPFROG_DIR/system/install"; do
   bash -n "$script"
 done
+
+if [ -f "$HOME/.config/omarchy/plugins/io.github.sirjul1337.lock-explorer/Service.qml" ] \
+    && ! grep -qF 'property int fingerprintFastFailures' \
+      "$HOME/.config/omarchy/plugins/io.github.sirjul1337.lock-explorer/Service.qml"; then
+  lock_test_dir="$(mktemp -d)"
+  trap 'find "$lock_test_dir" -depth -delete' EXIT
+  cp "$HOME/.config/omarchy/plugins/io.github.sirjul1337.lock-explorer/Service.qml" \
+    "$lock_test_dir/Service.qml"
+  if ! patch --dry-run --forward --batch --silent -d "$lock_test_dir" -p1 \
+      < "$LEAPFROG_DIR/lock/fingerprint-circuit-breaker.patch"; then
+    patch --dry-run --forward --batch --silent -d "$lock_test_dir" -p1 \
+      < "$LEAPFROG_DIR/lock/fingerprint-circuit-breaker-v1.7.patch"
+  fi
+fi
 
 python3 - "$LEAPFROG_DIR/theme-gallery/generate_gallery.py" <<'PY'
 from pathlib import Path

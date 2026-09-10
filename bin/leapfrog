@@ -13,9 +13,18 @@ unit_state() {
 
 status() {
   printf 'T1Bridge hardware: %s\n' "$(unit_state system t1-touchbar-hw.service)"
+  printf 'T1Bridge keybag: %s\n' "$(unit_state system t1bridge-keybag.service)"
   printf 'Leapfrog Touch Bar: %s\n' "$(unit_state user t1-touchbar.service)"
   printf 'Leapfrog camera: %s\n' "$(unit_state user leapfrog-camera.service)"
   printf 'Touch ID socket: %s\n' "$(unit_state system t1-touchid-auth.socket)"
+  lock_service="$HOME/.config/omarchy/plugins/io.github.sirjul1337.lock-explorer/Service.qml"
+  if grep -qF 'property int fingerprintFastFailures' "$lock_service" 2>/dev/null; then
+    printf 'Lock-screen guard: active\n'
+  elif [ -f "$lock_service" ]; then
+    printf 'Lock-screen guard: update pending\n'
+  else
+    printf 'Lock-screen guard: unavailable (stock lock is not patched)\n'
+  fi
   printf 'Renderer: %s\n' "$(readlink "$HOME/.config/t1bridge/renderer" 2>/dev/null || printf 'stock')"
   if command -v v4l2-ctl >/dev/null 2>&1; then
     v4l2-ctl --list-devices 2>/dev/null || true

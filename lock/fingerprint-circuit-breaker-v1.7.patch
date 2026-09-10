@@ -1,0 +1,91 @@
+--- a/Service.qml
++++ b/Service.qml
+@@ -1626,6 +1626,12 @@
+   property bool pendingSessionLock: false
+   property bool authenticatingPassword: false
+   property bool fingerprintAuthenticating: false
++  // A broken fingerprint service must not become an unbounded PAM loop. A
++  // normal rejected scan takes long enough to reset this streak; an immediate
++  // service failure opens the circuit for this lock and leaves password auth.
++  property int fingerprintFastFailures: 0
++  property double fingerprintStartedAt: 0
++  property bool fingerprintPaused: false
+   property bool faceAuthenticating: false
+   property bool passwordPamConfigured: false
+   property bool fingerprintConfigured: false
+@@ -1750,6 +1756,9 @@
+     failedAttempts = 0
+     authenticatingPassword = false
+     fingerprintAuthenticating = false
++    fingerprintFastFailures = 0
++    fingerprintStartedAt = 0
++    fingerprintPaused = false
+     fingerprintRetryTimer.stop()
+     if (passwordPam.active) passwordPam.abort()
+     if (fingerprintPam.active) fingerprintPam.abort()
+@@ -1900,15 +1909,37 @@
+   }
+ 
+   function startFingerprint() {
+-    if (!lockRequested || !sessionLock.secure || !fingerprintConfigured) return
++    if (!lockRequested || !sessionLock.secure || !fingerprintConfigured || fingerprintPaused) return
+     if (fingerprintPam.active || fingerprintAuthenticating) return
+ 
+     fingerprintAuthenticating = true
++    fingerprintStartedAt = Date.now()
+     if (!fingerprintPam.start()) {
+       fingerprintAuthenticating = false
++      scheduleFingerprintRetry()
+     }
+   }
+ 
++  function scheduleFingerprintRetry() {
++    if (!lockRequested || !fingerprintConfigured || fingerprintPaused) return
++
++    var elapsed = fingerprintStartedAt > 0 ? Date.now() - fingerprintStartedAt : 0
++    if (elapsed < 1000) {
++      fingerprintFastFailures += 1
++      if (fingerprintFastFailures >= 3) {
++        fingerprintPaused = true
++        logEvent("fingerprint-paused: repeated-service-errors")
++        return
++      }
++      fingerprintRetryTimer.interval = 1000 * Math.pow(2, fingerprintFastFailures - 1)
++    } else {
++      fingerprintFastFailures = 0
++      fingerprintRetryTimer.interval = 250
++    }
++
++    fingerprintRetryTimer.restart()
++  }
++
+   function handleFingerprintFinished(result) {
+     fingerprintAuthenticating = false
+ 
+@@ -1916,7 +1947,7 @@
+     if (result === PamResult.Success) {
+       finishUnlock()
+     } else if (fingerprintConfigured) {
+-      fingerprintRetryTimer.restart()
++      scheduleFingerprintRetry()
+     }
+   }
+ 
+@@ -2123,7 +2154,7 @@
+ 
+     onError: function(error) {
+       root.fingerprintAuthenticating = false
+-      if (root.lockRequested && root.fingerprintConfigured) fingerprintRetryTimer.restart()
++      root.scheduleFingerprintRetry()
+     }
+   }
+ 
+@@ -2227,7 +2258,7 @@
+ 
+   Process {
+     id: fingerprintCheckProc
+-    command: ["bash", "-c", "if [[ -f /etc/pam.d/omarchy-lock-fingerprint ]] && command -v fprintd-list >/dev/null 2>&1 && fprintd-list \"$USER\" 2>/dev/null | grep -qi finger; then echo yes; else echo no; fi"]
++    command: ["bash", "-c", "if [[ -f /etc/pam.d/omarchy-lock-fingerprint ]] && systemctl --quiet is-active t1bridge-keybag.service && command -v fprintd-list >/dev/null 2>&1 && fprintd-list \"$USER\" 2>/dev/null | grep -qi finger; then echo yes; else echo no; fi"]
+     stdout: StdioCollector { id: fingerprintCheckStdout; waitForEnd: true }
+     onExited: {
+       root.fingerprintConfigured = String(fingerprintCheckStdout.text || "").trim() === "yes"

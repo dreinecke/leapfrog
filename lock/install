@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LEAPFROG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PLUGIN_DIR="$HOME/.config/omarchy/plugins/io.github.sirjul1337.lock-explorer"
+SERVICE="$PLUGIN_DIR/Service.qml"
+
+if command -v omarchy-shell >/dev/null 2>&1; then
+  lock_status="$(omarchy-shell lock status 2>/dev/null || true)"
+  case "$lock_status" in
+    *'"sessionLocked":true'*|*'"pending":true'*)
+      printf 'leapfrog-lock: deferred (the session is locked)\n'
+      exit 0
+      ;;
+    *'"sessionLocked":false'*) ;;
+    *)
+      if [ "$(omarchy-shell lock isLocked 2>/dev/null || true)" != false ]; then
+        printf 'leapfrog-lock: deferred (lock state could not be proved safe)\n'
+        exit 0
+      fi
+      ;;
+  esac
+fi
+
+if [ ! -f "$SERVICE" ]; then
+  printf 'leapfrog-lock: lock-screen explorer is not installed; skipped\n'
+  exit 0
+fi
+
+if grep -qF 'property int fingerprintFastFailures' "$SERVICE"; then
+  printf 'leapfrog-lock: current\n'
+  exit 0
+fi
+
+if ! grep -qF '"clonedFrom": "omarchy.lock"' "$PLUGIN_DIR/manifest.json" 2>/dev/null; then
+  printf 'leapfrog-lock: refusing to patch an unrecognised lock service\n' >&2
+  exit 1
+fi
+
+selected_patch=""
+for candidate in \
+  "$LEAPFROG_DIR/lock/fingerprint-circuit-breaker.patch" \
+  "$LEAPFROG_DIR/lock/fingerprint-circuit-breaker-v1.7.patch"; do
+  if patch --dry-run --forward --batch --silent -d "$PLUGIN_DIR" -p1 < "$candidate"; then
+    selected_patch="$candidate"
+    break
+  fi
+done
+
+if [ -z "$selected_patch" ]; then
+  printf 'leapfrog-lock: the lock plugin changed upstream; circuit-breaker patch needs review\n' >&2
+  exit 1
+fi
+
+patch --forward --batch --silent -d "$PLUGIN_DIR" -p1 < "$selected_patch"
+printf 'leapfrog-lock: changed (restart the shell while unlocked, or sign in again)\n'

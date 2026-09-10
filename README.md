@@ -12,6 +12,10 @@ parts built around them:
   audio, Escape, Fn/F1–F12, and Touch ID feedback.
 - `camera/` — a stable virtual FaceTime camera for applications that cannot
   consume the T1 camera's native H.264 stream.
+- `lock/` — a lock-screen guard that uses Touch ID only while T1Bridge is
+  healthy and stops rapid PAM retries after repeated service failures. It
+  currently targets the installed Lock Screen Explorer clone; see
+  [`lock/README.md`](lock/README.md).
 - `system/` — the reviewed PAM and module configuration for Touch ID and the
   virtual camera.
 - `theme-gallery/` — a local browser for checking the Omarchy colors and
@@ -22,7 +26,8 @@ parts built around them:
 
 The upstream T1Bridge, T1Bridge DKMS, T1Bridge-enabled fprintd/libfprint,
 v4l2loopback, GStreamer, Rust, and standard C build tools must already be
-installed. Then run:
+installed. T1Bridge 0.1.7 or later is recommended because it limits a failed
+keybag relay's systemd restart rate. Then run:
 
 ```sh
 ./install.sh

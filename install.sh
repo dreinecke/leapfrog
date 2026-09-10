@@ -21,6 +21,7 @@ install -Dm755 \
   "$HOME/.local/bin/leapfrog-touchbar"
 install -Dm755 "$LEAPFROG_DIR/bin/leapfrog" "$HOME/.local/bin/leapfrog"
 "$LEAPFROG_DIR/camera/build-relay" "$HOME/.local/libexec/leapfrog-camera-relayd"
+"$LEAPFROG_DIR/lock/install"
 
 mkdir -p "$HOME/.config/t1bridge" "$HOME/.config/systemd/user" "$RETIRED_DIR"
 
