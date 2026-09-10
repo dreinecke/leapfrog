@@ -3,9 +3,24 @@ set -euo pipefail
 
 LEAPFROG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLUGIN_DIR="$HOME/.config/omarchy/plugins/io.github.sirjul1337.lock-explorer"
+LIVE_PLUGIN_DIR="$PLUGIN_DIR"
+
+if [ "${1:-}" = "--plugin-dir" ]; then
+  [ "$#" -eq 2 ] || {
+    printf 'usage: %s [--plugin-dir DIR]\n' "$0" >&2
+    exit 2
+  }
+  PLUGIN_DIR="$2"
+elif [ "$#" -ne 0 ]; then
+  printf 'usage: %s [--plugin-dir DIR]\n' "$0" >&2
+  exit 2
+fi
+
 SERVICE="$PLUGIN_DIR/Service.qml"
 
-if command -v omarchy-shell >/dev/null 2>&1; then
+# A custom directory is an inert staging tree, not the live QML tree. Enterprise
+# uses this form to guard the exact marketplace copy before it crosses ships.
+if [ "$PLUGIN_DIR" = "$LIVE_PLUGIN_DIR" ] && command -v omarchy-shell >/dev/null 2>&1; then
   lock_status="$(omarchy-shell lock status 2>/dev/null || true)"
   case "$lock_status" in
     *'"sessionLocked":true'*|*'"pending":true'*)

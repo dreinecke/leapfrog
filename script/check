@@ -18,20 +18,6 @@ for script in \
   bash -n "$script"
 done
 
-if [ -f "$HOME/.config/omarchy/plugins/io.github.sirjul1337.lock-explorer/Service.qml" ] \
-    && ! grep -qF 'property int fingerprintFastFailures' \
-      "$HOME/.config/omarchy/plugins/io.github.sirjul1337.lock-explorer/Service.qml"; then
-  lock_test_dir="$(mktemp -d)"
-  trap 'find "$lock_test_dir" -depth -delete' EXIT
-  cp "$HOME/.config/omarchy/plugins/io.github.sirjul1337.lock-explorer/Service.qml" \
-    "$lock_test_dir/Service.qml"
-  if ! patch --dry-run --forward --batch --silent -d "$lock_test_dir" -p1 \
-      < "$LEAPFROG_DIR/lock/fingerprint-circuit-breaker.patch"; then
-    patch --dry-run --forward --batch --silent -d "$lock_test_dir" -p1 \
-      < "$LEAPFROG_DIR/lock/fingerprint-circuit-breaker-v1.7.patch"
-  fi
-fi
-
 python3 - "$LEAPFROG_DIR/theme-gallery/generate_gallery.py" <<'PY'
 from pathlib import Path
 import sys
@@ -39,5 +25,17 @@ import sys
 source = Path(sys.argv[1]).read_text()
 compile(source, sys.argv[1], "exec")
 PY
+
+# The Enterprise ship sync patches an inert marketplace-plugin staging tree.
+# Exercise that public interface even when the live plugin is already guarded.
+if [ -f "$HOME/.config/omarchy/plugins/io.github.sirjul1337.lock-explorer/Service.qml" ]; then
+  staged_lock_test="$(mktemp -d)"
+  trap 'find "$staged_lock_test" -depth -delete' EXIT
+  cp "$HOME/.config/omarchy/plugins/io.github.sirjul1337.lock-explorer/Service.qml" \
+    "$staged_lock_test/Service.qml"
+  cp "$HOME/.config/omarchy/plugins/io.github.sirjul1337.lock-explorer/manifest.json" \
+    "$staged_lock_test/manifest.json"
+  "$LEAPFROG_DIR/lock/install" --plugin-dir "$staged_lock_test" >/dev/null
+fi
 
 printf 'Leapfrog checks passed.\n'
