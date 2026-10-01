@@ -11,17 +11,28 @@ use std::{
     os::{fd::RawFd, unix::fs::symlink},
     path::PathBuf,
     process::Command,
+    thread,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, bail};
 use draw::{RenderedUi, render, save_png};
 use state::{TouchIdState, VisualState, home_dir, load_font, read_touch_id_state};
-use t1bridge::{Brightness, Client, Event, InputFrame, Key};
+use t1bridge::{Brightness, Client, ClientError, Event, InputFrame, Key};
 use ui::{Action, Button, action_at};
 
 const PREVIEW_WIDTH: u32 = 2170;
 const PREVIEW_HEIGHT: u32 = 60;
+const CONNECT_BUDGET: Duration = Duration::from_secs(90);
+const CONNECT_BACKOFF_FIRST: Duration = Duration::from_millis(100);
+const CONNECT_BACKOFF_LIMIT: Duration = Duration::from_secs(2);
+const HEALTHY_SESSION: Duration = Duration::from_secs(2);
+const SHORT_SESSION_LIMIT: u32 = 5;
+
+enum SessionEnd {
+    StockRendererSelected,
+    ConnectionLost,
+}
 
 struct App {
     visual: VisualState,
@@ -132,9 +143,81 @@ fn main() -> Result<()> {
 }
 
 fn run_renderer() -> Result<()> {
-    let mut client = Client::connect().context("connect to T1Bridge hardware service")?;
+    let mut short_sessions = 0;
+    loop {
+        let mut client = connect_with_retry()?;
+        let dimensions = client.dimensions();
+        let mut app = App::new(dimensions.width, dimensions.height)?;
+        let started = Instant::now();
+        match run_session(&mut client, &mut app)? {
+            SessionEnd::StockRendererSelected => return stock_renderer(false),
+            SessionEnd::ConnectionLost => {
+                short_sessions = if started.elapsed() < HEALTHY_SESSION {
+                    short_sessions + 1
+                } else {
+                    0
+                };
+                if short_sessions >= SHORT_SESSION_LIMIT {
+                    bail!("the Touch Bar connection kept failing as soon as it opened");
+                }
+                eprintln!("t1-touchbar renderer: Touch Bar connection lost; reconnecting");
+            }
+        }
+    }
+}
+
+fn hardware_not_ready(error: &ClientError) -> bool {
+    matches!(error, ClientError::Unavailable | ClientError::Transport)
+}
+
+fn connection_lost(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<ClientError>()
+        .is_some_and(hardware_not_ready)
+}
+
+fn connect_with_retry() -> Result<Client> {
+    let started = Instant::now();
+    let deadline = started + CONNECT_BUDGET;
+    let mut backoff = CONNECT_BACKOFF_FIRST;
+    let mut waited = false;
+    loop {
+        match Client::connect() {
+            Ok(client) => {
+                if waited {
+                    eprintln!(
+                        "t1-touchbar renderer: Touch Bar hardware ready after {:.1}s",
+                        started.elapsed().as_secs_f32()
+                    );
+                }
+                return Ok(client);
+            }
+            Err(error) if !hardware_not_ready(&error) => {
+                return Err(error).context("connect to T1Bridge hardware service");
+            }
+            Err(error) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "connect to T1Bridge hardware service within {}s",
+                            CONNECT_BUDGET.as_secs()
+                        )
+                    });
+                }
+                if !waited {
+                    eprintln!("t1-touchbar renderer: waiting for the Touch Bar hardware ({error})");
+                    waited = true;
+                }
+                thread::sleep(backoff.min(remaining));
+                backoff = (backoff * 2).min(CONNECT_BACKOFF_LIMIT);
+            }
+        }
+    }
+}
+
+fn run_session(client: &mut Client, app: &mut App) -> Result<SessionEnd> {
     let dimensions = client.dimensions();
-    let mut app = App::new(dimensions.width, dimensions.height)?;
     let mut dirty = true;
     let mut next_system_refresh = Instant::now();
     let mut next_touch_id_refresh = Instant::now();
@@ -143,23 +226,39 @@ fn run_renderer() -> Result<()> {
         if dirty && client.frame_available() {
             let rendered = app.rendered();
             app.buttons = rendered.buttons;
-            if client.submit_rgba(&rendered.pixels, dimensions.width, dimensions.height)? {
-                dirty = false;
+            match client.submit_rgba(&rendered.pixels, dimensions.width, dimensions.height) {
+                Ok(submitted) => dirty = !submitted,
+                Err(error) if hardware_not_ready(&error) => {
+                    return Ok(SessionEnd::ConnectionLost);
+                }
+                Err(error) => return Err(error).context("submit a Touch Bar frame"),
             }
         }
 
-        poll_readable(client.raw_fd(), Duration::from_millis(50))?;
-        while let Some(event) = client.receive()? {
+        poll_readable(client.raw_fd(), Duration::from_millis(50))
+            .context("wait for Touch Bar events")?;
+        loop {
+            let event = match client.receive() {
+                Ok(Some(event)) => event,
+                Ok(None) => break,
+                Err(error) if hardware_not_ready(&error) => {
+                    return Ok(SessionEnd::ConnectionLost);
+                }
+                Err(error) => return Err(error).context("receive a Touch Bar event"),
+            };
             match event {
                 Event::Input(input) => {
                     let (actions, input_changed) = app.handle_input(input);
                     dirty |= input_changed;
                     for action in actions {
-                        if perform_action(action, &mut app, &mut client)? {
-                            stock_renderer(false)?;
-                            return Ok(());
+                        match perform_action(action, app, client) {
+                            Ok(true) => return Ok(SessionEnd::StockRendererSelected),
+                            Ok(false) => dirty = true,
+                            Err(error) if connection_lost(&error) => {
+                                return Ok(SessionEnd::ConnectionLost);
+                            }
+                            Err(error) => return Err(error),
                         }
-                        dirty = true;
                     }
                 }
                 Event::FrameAvailable => {}

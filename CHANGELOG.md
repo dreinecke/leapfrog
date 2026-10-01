@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.2 — 2026-09-13
+
+- Kept the Touch Bar renderer alive through a cold boot. The T1 hardware can
+  take half a minute to answer after the launcher starts the renderer, and a
+  single refused connection made the renderer exit, which left T1Bridge on its
+  built-in bar until the next manual restart. The renderer now waits up to 90
+  seconds for the hardware and reconnects for the rest of the session, so a
+  suspend or a hardware hiccup no longer costs the Omarchy bar either.
+
 ## 0.2.1 — 2026-09-10
 
 - Added an inert staging-tree mode for Enterprise, so the exact marketplace
