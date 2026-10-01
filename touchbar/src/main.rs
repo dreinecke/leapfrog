@@ -329,6 +329,23 @@ fn perform_action(action: Action, app: &mut App, client: &mut Client) -> Result<
             );
             app.visual.snapshot.volume = app.visual.snapshot.volume.saturating_add(5).min(100);
         }
+        Action::PrintScreen => {
+            // The renderer's boot-time environment never has WAYLAND_DISPLAY,
+            // so the screenshot flow is exec'd by Hyprland itself — the same
+            // Omasnap command the keyboard's SUPER SHIFT S and Print keys run.
+            // hyprctl's dispatch takes a Lua expression, and exec_cmd is its
+            // exec dispatcher.
+            let script = home_dir()?.join(".local/bin/omasnap-shot");
+            run_quiet(
+                "hyprctl",
+                &[
+                    "--instance",
+                    "0",
+                    "dispatch",
+                    &format!("hl.dsp.exec_cmd([[{}]])", script.display()),
+                ],
+            )
+        }
         Action::FnToggle => app.sticky_fn = !app.sticky_fn,
         Action::CancelTouchId => client.cancel_touch_id()?,
     }

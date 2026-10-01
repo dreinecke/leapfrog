@@ -281,7 +281,6 @@ pub fn render(
             width,
             height,
             UiStatus {
-                workspace: &snapshot.workspace,
                 playback: &snapshot.playback,
                 media_available: snapshot.media_available,
                 audio_muted: snapshot.audio_muted,

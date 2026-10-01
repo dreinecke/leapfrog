@@ -12,6 +12,7 @@ pub enum Action {
     ToggleMute,
     VolumeDown,
     VolumeUp,
+    PrintScreen,
     FnToggle,
     CancelTouchId,
 }
@@ -73,7 +74,6 @@ pub struct Button {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct UiStatus<'a> {
-    pub workspace: &'a str,
     pub playback: &'a str,
     pub media_available: bool,
     pub audio_muted: bool,
@@ -88,7 +88,7 @@ struct ButtonSpec {
 
 const VERTICAL_MARGIN: u32 = 0;
 const GAP: u32 = 12;
-const NORMAL_ACTION_COUNT: u32 = 12;
+const NORMAL_ACTION_COUNT: u32 = 13;
 const FUNCTION_ACTION_COUNT: u32 = 14;
 const ACTION_BUTTON_WIDTH: u32 = 143;
 
@@ -101,10 +101,11 @@ const ICON_BRIGHT: &str = "\u{f185}";
 const ICON_MUTE: &str = "\u{f026}";
 const ICON_VOLUME_DOWN: &str = "\u{f027}";
 const ICON_VOLUME_UP: &str = "\u{f028}";
+const ICON_PRINTSCREEN: &str = "\u{f0c4}";
 
 pub fn normal_layout(width: u32, height: u32, status: UiStatus<'_>) -> Vec<Button> {
     let media_muted = !status.media_available;
-    let left_groups = vec![
+    let groups = vec![
         vec![spec(Action::Escape, Label::Text("ESC".into()), false)],
         vec![
             spec(
@@ -127,8 +128,6 @@ pub fn normal_layout(width: u32, height: u32, status: UiStatus<'_>) -> Vec<Butto
             spec(Action::BrightnessDown, Label::Glyph(ICON_DIM), false),
             spec(Action::BrightnessUp, Label::Glyph(ICON_BRIGHT), false),
         ],
-    ];
-    let right_groups = vec![
         vec![
             spec(
                 Action::KeyboardBacklightDown,
@@ -154,42 +153,17 @@ pub fn normal_layout(width: u32, height: u32, status: UiStatus<'_>) -> Vec<Butto
             spec(Action::VolumeDown, Label::Glyph(ICON_VOLUME_DOWN), false),
             spec(Action::VolumeUp, Label::Glyph(ICON_VOLUME_UP), false),
         ],
+        vec![spec(
+            Action::PrintScreen,
+            Label::Glyph(ICON_PRINTSCREEN),
+            false,
+        )],
         vec![spec(Action::FnToggle, Label::Text("FN".into()), false)],
     ];
-    let left_group_count = left_groups.len();
-    let left = alternate_fills(left_groups, 0);
-    let workspace_fill = Fill::for_group(left_group_count);
-    let right = alternate_fills(right_groups, left_group_count + 1);
-    debug_assert_eq!(left.len() + right.len(), NORMAL_ACTION_COUNT as usize);
-
-    let (action_width, horizontal_margin) = shared_action_geometry(width);
-    let total_gap = GAP.saturating_mul(NORMAL_ACTION_COUNT);
-    let available = width
-        .saturating_sub(horizontal_margin * 2)
-        .saturating_sub(total_gap);
-    let workspace_width = available.saturating_sub(action_width * NORMAL_ACTION_COUNT);
-    let workspace_x = horizontal_margin.saturating_add((action_width + GAP) * left.len() as u32);
-
-    let mut buttons = layout_fixed_group(horizontal_margin, height, action_width, left);
-    buttons.push(Button {
-        action: None,
-        rect: Rect {
-            x: workspace_x,
-            y: VERTICAL_MARGIN,
-            width: workspace_width,
-            height: height.saturating_sub(VERTICAL_MARGIN * 2),
-        },
-        label: Label::Text(status.workspace.to_uppercase()),
-        fill: workspace_fill,
-        muted: false,
-    });
-    buttons.extend(layout_fixed_group(
-        workspace_x.saturating_add(workspace_width + GAP),
-        height,
-        action_width,
-        right,
-    ));
-    buttons
+    let specs = alternate_fills(groups, 0);
+    debug_assert_eq!(specs.len(), NORMAL_ACTION_COUNT as usize);
+    let (action_width, horizontal_margin) = action_geometry(width, NORMAL_ACTION_COUNT);
+    layout_fixed_group(horizontal_margin, height, action_width, specs)
 }
 
 pub fn function_layout(width: u32, height: u32) -> Vec<Button> {
@@ -213,7 +187,7 @@ pub fn function_layout(width: u32, height: u32) -> Vec<Button> {
     )]);
     let specs = alternate_fills(groups, 0);
     debug_assert_eq!(specs.len(), FUNCTION_ACTION_COUNT as usize);
-    let (action_width, horizontal_margin) = shared_action_geometry(width);
+    let (action_width, horizontal_margin) = action_geometry(width, FUNCTION_ACTION_COUNT);
     layout_fixed_group(horizontal_margin, height, action_width, specs)
 }
 
@@ -276,12 +250,12 @@ fn button_at(spec: ButtonSpec, fill: Fill, x: u32, width: u32, height: u32) -> B
     }
 }
 
-fn shared_action_geometry(width: u32) -> (u32, u32) {
-    let total_gap = GAP.saturating_mul(FUNCTION_ACTION_COUNT.saturating_sub(1));
+fn action_geometry(width: u32, count: u32) -> (u32, u32) {
+    let total_gap = GAP.saturating_mul(count.saturating_sub(1));
     let available = width.saturating_sub(total_gap);
-    let action_width = ACTION_BUTTON_WIDTH.min(available / FUNCTION_ACTION_COUNT);
+    let action_width = ACTION_BUTTON_WIDTH.min(available / count);
     let content_width = action_width
-        .saturating_mul(FUNCTION_ACTION_COUNT)
+        .saturating_mul(count)
         .saturating_add(total_gap);
     let horizontal_margin = width.saturating_sub(content_width) / 2;
     (action_width, horizontal_margin)
@@ -316,7 +290,6 @@ mod tests {
 
     fn status() -> UiStatus<'static> {
         UiStatus {
-            workspace: "Voyager",
             playback: "PLAY",
             media_available: true,
             audio_muted: false,
@@ -334,33 +307,14 @@ mod tests {
     }
 
     #[test]
-    fn normal_layout_keeps_action_widths_and_gives_workspace_the_remainder() {
+    fn normal_layout_keeps_action_widths_and_centers_the_row() {
         let buttons = normal_layout(2170, 60, status());
-        let workspace = buttons
-            .iter()
-            .find(|button| button.action.is_none())
-            .unwrap();
-        let (expected_action_width, expected_margin) = shared_action_geometry(2170);
-        let expected_workspace_width = 2170
-            - expected_margin * 2
-            - GAP * NORMAL_ACTION_COUNT
-            - expected_action_width * NORMAL_ACTION_COUNT;
-        assert_eq!(expected_action_width, ACTION_BUTTON_WIDTH);
-        assert_eq!(workspace.rect.width, expected_workspace_width);
+        assert_eq!(buttons.len(), NORMAL_ACTION_COUNT as usize);
+        assert!(buttons.iter().all(|button| button.action.is_some()));
+        assert!(buttons.iter().all(|button| button.rect.width == ACTION_BUTTON_WIDTH));
         assert!(buttons.iter().all(|button| button.rect.height == 60));
-        let action_widths = buttons
-            .iter()
-            .filter(|button| button.action.is_some())
-            .map(|button| button.rect.width)
-            .collect::<Vec<_>>();
-        assert_eq!(action_widths.len(), NORMAL_ACTION_COUNT as usize);
-        assert!(
-            action_widths
-                .iter()
-                .all(|width| *width == ACTION_BUTTON_WIDTH)
-        );
-        assert_eq!(buttons.last().unwrap().action, Some(Action::FnToggle));
         assert_eq!(buttons.first().unwrap().label, Label::Text("ESC".into()));
+        assert_eq!(buttons.last().unwrap().action, Some(Action::FnToggle));
         assert_eq!(buttons.last().unwrap().label, Label::Text("FN".into()));
 
         let mut ordered = buttons.iter().collect::<Vec<_>>();
@@ -372,15 +326,16 @@ mod tests {
                 .saturating_sub(pair[0].rect.x + pair[0].rect.width)
                 == GAP
         }));
-        let left_margin = ordered[0].rect.x;
+        let (expected_action_width, expected_margin) = action_geometry(2170, NORMAL_ACTION_COUNT);
+        assert_eq!(expected_action_width, ACTION_BUTTON_WIDTH);
+        assert_eq!(ordered[0].rect.x, expected_margin);
         let last = ordered.last().unwrap();
         let right_margin = 2170 - last.rect.x - last.rect.width;
-        assert_eq!(left_margin, expected_margin);
-        assert_eq!(right_margin, expected_margin);
+        assert_eq!(right_margin, expected_margin + 1);
     }
 
     #[test]
-    fn normal_layout_centers_the_workspace_between_equal_groups() {
+    fn normal_layout_slots_the_printscreen_between_volume_up_and_the_function_group() {
         let buttons = normal_layout(2170, 60, status());
         let actions = buttons
             .iter()
@@ -395,17 +350,15 @@ mod tests {
                 Some(Action::MediaNext),
                 Some(Action::BrightnessDown),
                 Some(Action::BrightnessUp),
-                None,
                 Some(Action::KeyboardBacklightDown),
                 Some(Action::KeyboardBacklightUp),
                 Some(Action::ToggleMute),
                 Some(Action::VolumeDown),
                 Some(Action::VolumeUp),
+                Some(Action::PrintScreen),
                 Some(Action::FnToggle),
             ]
         );
-        let workspace = &buttons[6];
-        assert_eq!(workspace.rect.x + workspace.rect.width / 2, 2170 / 2);
     }
 
     #[test]
@@ -439,7 +392,7 @@ mod tests {
                 .saturating_sub(pair[0].rect.x + pair[0].rect.width)
                 == GAP
         }));
-        let (_, expected_margin) = shared_action_geometry(2170);
+        let (_, expected_margin) = action_geometry(2170, FUNCTION_ACTION_COUNT);
         let last = buttons.last().unwrap();
         assert_eq!(buttons[0].rect.x, expected_margin);
         assert_eq!(2170 - last.rect.x - last.rect.width, expected_margin);

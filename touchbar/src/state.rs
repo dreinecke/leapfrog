@@ -6,7 +6,6 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use serde_json::Value;
 
 use crate::theme::Theme;
 
@@ -18,7 +17,6 @@ const LEDS: &str = "/sys/class/leds";
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Snapshot {
     pub theme: Theme,
-    pub workspace: String,
     pub playback: String,
     pub media_available: bool,
     pub volume: u8,
@@ -69,7 +67,6 @@ impl Snapshot {
         let (playback, media_available) = read_playback();
         Self {
             theme: Theme::load(&current),
-            workspace: read_workspace().unwrap_or_else(|| "Desktop".into()),
             playback,
             media_available,
             volume,
@@ -155,22 +152,6 @@ pub fn home_dir() -> Result<PathBuf> {
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
         .context("HOME is not an absolute path")
-}
-
-fn read_workspace() -> Option<String> {
-    // The renderer starts with the user's systemd manager at boot, before
-    // Hyprland exists, so it never inherits HYPRLAND_INSTANCE_SIGNATURE.
-    // Instance 0 is hyprctl's first running compositor, looked up afresh on
-    // every call, which also follows a compositor restart.
-    let output = Command::new("hyprctl")
-        .args(["--instance", "0", "-j", "activeworkspace"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let value: Value = serde_json::from_slice(&output.stdout).ok()?;
-    value.get("name").and_then(Value::as_str).map(str::to_owned)
 }
 
 fn read_volume() -> (u8, bool) {

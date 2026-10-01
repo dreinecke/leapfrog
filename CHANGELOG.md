@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.5 — 2026-10-01
+
+- Replaced the workspace tile with a printscreen button between the
+  volume-up and Fn buttons, leaving thirteen equal-width buttons centred as
+  one row. The scissors-icon button opens the same Omasnap screenshot flow
+  as the keyboard's SUPER SHIFT S and Print keys: it asks Hyprland to exec
+  the script, which works from the renderer's boot-time environment where
+  `WAYLAND_DISPLAY` is never set. Removed the workspace reading that only
+  the tile used.
+
 ## 0.2.4 — 2026-09-18
 
 - Fixed the Touch Bar's workspace tile reading DESKTOP after every boot. The
