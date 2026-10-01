@@ -158,8 +158,12 @@ pub fn home_dir() -> Result<PathBuf> {
 }
 
 fn read_workspace() -> Option<String> {
+    // The renderer starts with the user's systemd manager at boot, before
+    // Hyprland exists, so it never inherits HYPRLAND_INSTANCE_SIGNATURE.
+    // Instance 0 is hyprctl's first running compositor, looked up afresh on
+    // every call, which also follows a compositor restart.
     let output = Command::new("hyprctl")
-        .args(["-j", "activeworkspace"])
+        .args(["--instance", "0", "-j", "activeworkspace"])
         .output()
         .ok()?;
     if !output.status.success() {

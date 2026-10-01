@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.4 — 2026-09-18
+
+- Fixed the Touch Bar's workspace tile reading DESKTOP after every boot. The
+  renderer starts with the user's systemd manager, before Hyprland exists, so
+  it never inherited the variable `hyprctl` uses to find the compositor. It
+  now asks `hyprctl` for the first running Hyprland instance on every
+  refresh, so the tile shows the workspace within a second of Hyprland
+  starting and keeps working after a compositor restart.
+
 ## 0.2.3 — 2026-09-13
 
 - Replaced the Touch Bar's return-to-stock button with keyboard backlight

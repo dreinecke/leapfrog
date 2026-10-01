@@ -21,6 +21,9 @@ edge.
 
 The renderer reads only user-facing Omarchy state under
 `~/.local/state/omarchy/current/`. It does not modify packaged Omarchy files.
+It asks `hyprctl` for the active workspace by instance number rather than
+through its inherited environment, because T1Bridge starts the renderer at
+boot, before Hyprland is running.
 
 ## Commands
 
