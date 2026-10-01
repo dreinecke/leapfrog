@@ -7,12 +7,13 @@ pub enum Action {
     MediaNext,
     BrightnessDown,
     BrightnessUp,
+    KeyboardBacklightDown,
+    KeyboardBacklightUp,
     ToggleMute,
     VolumeDown,
     VolumeUp,
     FnToggle,
     CancelTouchId,
-    StockRenderer,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -33,22 +34,40 @@ impl Rect {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Tone {
+pub enum Fill {
+    Selection,
     Accent,
-    Info,
-    Media,
-    Brightness,
-    Audio,
-    Danger,
+}
+
+impl Fill {
+    fn for_group(index: usize) -> Self {
+        if index.is_multiple_of(2) {
+            Self::Selection
+        } else {
+            Self::Accent
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Backlight {
+    Dim,
+    Bright,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Label {
+    Text(String),
+    Glyph(&'static str),
+    KeyboardBacklight(Backlight),
 }
 
 #[derive(Clone, Debug)]
 pub struct Button {
     pub action: Option<Action>,
     pub rect: Rect,
-    pub label: String,
-    pub icon: bool,
-    pub tone: Tone,
+    pub label: Label,
+    pub fill: Fill,
     pub muted: bool,
 }
 
@@ -62,16 +81,14 @@ pub struct UiStatus<'a> {
 
 #[derive(Clone, Debug)]
 struct ButtonSpec {
-    action: Option<Action>,
-    label: String,
-    icon: bool,
-    tone: Tone,
+    action: Action,
+    label: Label,
     muted: bool,
 }
 
 const VERTICAL_MARGIN: u32 = 0;
 const GAP: u32 = 12;
-const NORMAL_ACTION_COUNT: u32 = 11;
+const NORMAL_ACTION_COUNT: u32 = 12;
 const FUNCTION_ACTION_COUNT: u32 = 14;
 const ACTION_BUTTON_WIDTH: u32 = 143;
 
@@ -84,111 +101,117 @@ const ICON_BRIGHT: &str = "\u{f185}";
 const ICON_MUTE: &str = "\u{f026}";
 const ICON_VOLUME_DOWN: &str = "\u{f027}";
 const ICON_VOLUME_UP: &str = "\u{f028}";
-const ICON_STOCK: &str = "\u{f0e2}";
 
 pub fn normal_layout(width: u32, height: u32, status: UiStatus<'_>) -> Vec<Button> {
-    let left_specs = vec![
-        spec(Action::Escape, "ESC", Tone::Accent, false),
-        icon_spec(
-            Action::MediaPrevious,
-            ICON_PREVIOUS,
-            Tone::Media,
-            !status.media_available,
-        ),
-        icon_spec(
-            Action::MediaPlayPause,
-            if status.playback == "PAUSE" {
-                ICON_PAUSE
-            } else {
-                ICON_PLAY
-            },
-            Tone::Media,
-            !status.media_available,
-        ),
-        icon_spec(
-            Action::MediaNext,
-            ICON_NEXT,
-            Tone::Media,
-            !status.media_available,
-        ),
-        icon_spec(Action::BrightnessDown, ICON_DIM, Tone::Brightness, false),
-        icon_spec(Action::BrightnessUp, ICON_BRIGHT, Tone::Brightness, false),
+    let media_muted = !status.media_available;
+    let left_groups = vec![
+        vec![spec(Action::Escape, Label::Text("ESC".into()), false)],
+        vec![
+            spec(
+                Action::MediaPrevious,
+                Label::Glyph(ICON_PREVIOUS),
+                media_muted,
+            ),
+            spec(
+                Action::MediaPlayPause,
+                Label::Glyph(if status.playback == "PAUSE" {
+                    ICON_PAUSE
+                } else {
+                    ICON_PLAY
+                }),
+                media_muted,
+            ),
+            spec(Action::MediaNext, Label::Glyph(ICON_NEXT), media_muted),
+        ],
+        vec![
+            spec(Action::BrightnessDown, Label::Glyph(ICON_DIM), false),
+            spec(Action::BrightnessUp, Label::Glyph(ICON_BRIGHT), false),
+        ],
     ];
-    let right_specs = vec![
-        icon_spec(
-            Action::ToggleMute,
-            if status.audio_muted {
-                ICON_VOLUME_UP
-            } else {
-                ICON_MUTE
-            },
-            Tone::Audio,
-            false,
-        ),
-        icon_spec(Action::VolumeDown, ICON_VOLUME_DOWN, Tone::Audio, false),
-        icon_spec(Action::VolumeUp, ICON_VOLUME_UP, Tone::Audio, false),
-        icon_spec(Action::StockRenderer, ICON_STOCK, Tone::Danger, false),
-        spec(Action::FnToggle, "FN", Tone::Accent, false),
+    let right_groups = vec![
+        vec![
+            spec(
+                Action::KeyboardBacklightDown,
+                Label::KeyboardBacklight(Backlight::Dim),
+                false,
+            ),
+            spec(
+                Action::KeyboardBacklightUp,
+                Label::KeyboardBacklight(Backlight::Bright),
+                false,
+            ),
+        ],
+        vec![
+            spec(
+                Action::ToggleMute,
+                Label::Glyph(if status.audio_muted {
+                    ICON_VOLUME_UP
+                } else {
+                    ICON_MUTE
+                }),
+                false,
+            ),
+            spec(Action::VolumeDown, Label::Glyph(ICON_VOLUME_DOWN), false),
+            spec(Action::VolumeUp, Label::Glyph(ICON_VOLUME_UP), false),
+        ],
+        vec![spec(Action::FnToggle, Label::Text("FN".into()), false)],
     ];
+    let left_group_count = left_groups.len();
+    let left = alternate_fills(left_groups, 0);
+    let workspace_fill = Fill::for_group(left_group_count);
+    let right = alternate_fills(right_groups, left_group_count + 1);
+    debug_assert_eq!(left.len() + right.len(), NORMAL_ACTION_COUNT as usize);
 
-    debug_assert_eq!(
-        left_specs.len() + right_specs.len(),
-        NORMAL_ACTION_COUNT as usize
-    );
     let (action_width, horizontal_margin) = shared_action_geometry(width);
     let total_gap = GAP.saturating_mul(NORMAL_ACTION_COUNT);
     let available = width
         .saturating_sub(horizontal_margin * 2)
         .saturating_sub(total_gap);
     let workspace_width = available.saturating_sub(action_width * NORMAL_ACTION_COUNT);
-    let mut x = horizontal_margin;
-    let button_height = height.saturating_sub(VERTICAL_MARGIN * 2);
-    let mut buttons = Vec::with_capacity(NORMAL_ACTION_COUNT as usize + 1);
+    let workspace_x = horizontal_margin.saturating_add((action_width + GAP) * left.len() as u32);
 
-    for spec in left_specs {
-        buttons.push(button_at(spec, x, action_width, button_height));
-        x = x.saturating_add(action_width + GAP);
-    }
+    let mut buttons = layout_fixed_group(horizontal_margin, height, action_width, left);
     buttons.push(Button {
         action: None,
         rect: Rect {
-            x,
+            x: workspace_x,
             y: VERTICAL_MARGIN,
             width: workspace_width,
-            height: button_height,
+            height: height.saturating_sub(VERTICAL_MARGIN * 2),
         },
-        label: status.workspace.to_uppercase(),
-        icon: false,
-        tone: Tone::Info,
+        label: Label::Text(status.workspace.to_uppercase()),
+        fill: workspace_fill,
         muted: false,
     });
-    x = x.saturating_add(workspace_width + GAP);
-    for spec in right_specs {
-        buttons.push(button_at(spec, x, action_width, button_height));
-        x = x.saturating_add(action_width + GAP);
-    }
+    buttons.extend(layout_fixed_group(
+        workspace_x.saturating_add(workspace_width + GAP),
+        height,
+        action_width,
+        right,
+    ));
     buttons
 }
 
 pub fn function_layout(width: u32, height: u32) -> Vec<Button> {
-    let mut specs = Vec::with_capacity(FUNCTION_ACTION_COUNT as usize);
-    specs.push(spec(Action::Escape, "ESC", Tone::Accent, false));
-    for number in 1..=12 {
-        let tone = match number {
-            1 | 2 | 5 | 6 => Tone::Brightness,
-            3 | 4 => Tone::Accent,
-            7..=9 => Tone::Media,
-            10..=12 => Tone::Audio,
-            _ => unreachable!(),
-        };
-        specs.push(spec(
-            Action::Function(number),
-            &format!("F{number}"),
-            tone,
-            false,
-        ));
+    let mut groups = vec![vec![spec(Action::Escape, Label::Text("ESC".into()), false)]];
+    for keys in [1..=2, 3..=4, 5..=6, 7..=9, 10..=12] {
+        groups.push(
+            keys.map(|number| {
+                spec(
+                    Action::Function(number),
+                    Label::Text(format!("F{number}")),
+                    false,
+                )
+            })
+            .collect(),
+        );
     }
-    specs.push(spec(Action::FnToggle, "FN", Tone::Accent, false));
+    groups.push(vec![spec(
+        Action::FnToggle,
+        Label::Text("FN".into()),
+        false,
+    )]);
+    let specs = alternate_fills(groups, 0);
     debug_assert_eq!(specs.len(), FUNCTION_ACTION_COUNT as usize);
     let (action_width, horizontal_margin) = shared_action_geometry(width);
     layout_fixed_group(horizontal_margin, height, action_width, specs)
@@ -206,9 +229,8 @@ pub fn touch_id_layout(width: u32, height: u32, cancellable: bool) -> Vec<Button
             width: 190,
             height: height.saturating_sub(VERTICAL_MARGIN * 2),
         },
-        label: "CANCEL".into(),
-        icon: false,
-        tone: Tone::Danger,
+        label: Label::Text("CANCEL".into()),
+        fill: Fill::Accent,
         muted: false,
     }]
 }
@@ -220,29 +242,28 @@ pub fn action_at(buttons: &[Button], x: u32, y: u32) -> Option<Action> {
         .and_then(|button| button.action)
 }
 
-fn spec(action: Action, label: &str, tone: Tone, muted: bool) -> ButtonSpec {
+fn spec(action: Action, label: Label, muted: bool) -> ButtonSpec {
     ButtonSpec {
-        action: Some(action),
-        label: label.into(),
-        icon: false,
-        tone,
+        action,
+        label,
         muted,
     }
 }
 
-fn icon_spec(action: Action, label: &str, tone: Tone, muted: bool) -> ButtonSpec {
-    ButtonSpec {
-        action: Some(action),
-        label: label.into(),
-        icon: true,
-        tone,
-        muted,
-    }
+fn alternate_fills(groups: Vec<Vec<ButtonSpec>>, first_group: usize) -> Vec<(ButtonSpec, Fill)> {
+    groups
+        .into_iter()
+        .enumerate()
+        .flat_map(|(offset, group)| {
+            let fill = Fill::for_group(first_group + offset);
+            group.into_iter().map(move |spec| (spec, fill))
+        })
+        .collect()
 }
 
-fn button_at(spec: ButtonSpec, x: u32, width: u32, height: u32) -> Button {
+fn button_at(spec: ButtonSpec, fill: Fill, x: u32, width: u32, height: u32) -> Button {
     Button {
-        action: spec.action,
+        action: Some(spec.action),
         rect: Rect {
             x,
             y: VERTICAL_MARGIN,
@@ -250,8 +271,7 @@ fn button_at(spec: ButtonSpec, x: u32, width: u32, height: u32) -> Button {
             height,
         },
         label: spec.label,
-        icon: spec.icon,
-        tone: spec.tone,
+        fill,
         muted: spec.muted,
     }
 }
@@ -271,29 +291,19 @@ fn layout_fixed_group(
     start: u32,
     height: u32,
     button_width: u32,
-    specs: Vec<ButtonSpec>,
+    specs: Vec<(ButtonSpec, Fill)>,
 ) -> Vec<Button> {
-    if specs.is_empty() {
-        return Vec::new();
-    }
     let mut x = start;
-
     specs
         .into_iter()
-        .map(|spec| {
-            let button = Button {
-                action: spec.action,
-                rect: Rect {
-                    x,
-                    y: VERTICAL_MARGIN,
-                    width: button_width,
-                    height: height.saturating_sub(VERTICAL_MARGIN * 2),
-                },
-                label: spec.label,
-                icon: spec.icon,
-                tone: spec.tone,
-                muted: spec.muted,
-            };
+        .map(|(spec, fill)| {
+            let button = button_at(
+                spec,
+                fill,
+                x,
+                button_width,
+                height.saturating_sub(VERTICAL_MARGIN * 2),
+            );
             x = x.saturating_add(button_width + GAP);
             button
         })
@@ -304,18 +314,28 @@ fn layout_fixed_group(
 mod tests {
     use super::*;
 
+    fn status() -> UiStatus<'static> {
+        UiStatus {
+            workspace: "Voyager",
+            playback: "PLAY",
+            media_available: true,
+            audio_muted: false,
+        }
+    }
+
+    fn fill_runs(buttons: &[Button]) -> Vec<Fill> {
+        let mut runs: Vec<Fill> = Vec::new();
+        for button in buttons {
+            if runs.last() != Some(&button.fill) {
+                runs.push(button.fill);
+            }
+        }
+        runs
+    }
+
     #[test]
     fn normal_layout_keeps_action_widths_and_gives_workspace_the_remainder() {
-        let buttons = normal_layout(
-            2170,
-            60,
-            UiStatus {
-                workspace: "Voyager",
-                playback: "PLAY",
-                media_available: true,
-                audio_muted: false,
-            },
-        );
+        let buttons = normal_layout(2170, 60, status());
         let workspace = buttons
             .iter()
             .find(|button| button.action.is_none())
@@ -340,10 +360,8 @@ mod tests {
                 .all(|width| *width == ACTION_BUTTON_WIDTH)
         );
         assert_eq!(buttons.last().unwrap().action, Some(Action::FnToggle));
-        assert_eq!(buttons.first().unwrap().label, "ESC");
-        assert!(!buttons.first().unwrap().icon);
-        assert_eq!(buttons.last().unwrap().label, "FN");
-        assert!(!buttons.last().unwrap().icon);
+        assert_eq!(buttons.first().unwrap().label, Label::Text("ESC".into()));
+        assert_eq!(buttons.last().unwrap().label, Label::Text("FN".into()));
 
         let mut ordered = buttons.iter().collect::<Vec<_>>();
         ordered.sort_by_key(|button| button.rect.x);
@@ -359,6 +377,50 @@ mod tests {
         let right_margin = 2170 - last.rect.x - last.rect.width;
         assert_eq!(left_margin, expected_margin);
         assert_eq!(right_margin, expected_margin);
+    }
+
+    #[test]
+    fn normal_layout_centers_the_workspace_between_equal_groups() {
+        let buttons = normal_layout(2170, 60, status());
+        let actions = buttons
+            .iter()
+            .map(|button| button.action)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actions,
+            [
+                Some(Action::Escape),
+                Some(Action::MediaPrevious),
+                Some(Action::MediaPlayPause),
+                Some(Action::MediaNext),
+                Some(Action::BrightnessDown),
+                Some(Action::BrightnessUp),
+                None,
+                Some(Action::KeyboardBacklightDown),
+                Some(Action::KeyboardBacklightUp),
+                Some(Action::ToggleMute),
+                Some(Action::VolumeDown),
+                Some(Action::VolumeUp),
+                Some(Action::FnToggle),
+            ]
+        );
+        let workspace = &buttons[6];
+        assert_eq!(workspace.rect.x + workspace.rect.width / 2, 2170 / 2);
+    }
+
+    #[test]
+    fn neighbouring_groups_alternate_between_the_two_fills() {
+        let expected = [
+            Fill::Selection,
+            Fill::Accent,
+            Fill::Selection,
+            Fill::Accent,
+            Fill::Selection,
+            Fill::Accent,
+            Fill::Selection,
+        ];
+        assert_eq!(fill_runs(&normal_layout(2170, 60, status())), expected);
+        assert_eq!(fill_runs(&function_layout(2170, 60)), expected);
     }
 
     #[test]
@@ -385,16 +447,7 @@ mod tests {
 
     #[test]
     fn action_width_is_identical_across_normal_and_function_layouts() {
-        let normal = normal_layout(
-            2170,
-            60,
-            UiStatus {
-                workspace: "Voyager",
-                playback: "PLAY",
-                media_available: true,
-                audio_muted: false,
-            },
-        );
+        let normal = normal_layout(2170, 60, status());
         let function = function_layout(2170, 60);
         let widths = normal
             .iter()

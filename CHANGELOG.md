@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.3 — 2026-09-13
+
+- Replaced the Touch Bar's return-to-stock button with keyboard backlight
+  controls. They sit just right of the workspace tile, which keeps that tile
+  centred between six actions on either side, and their icons follow the
+  illumination keys on Apple keyboards: three rays over a dashed bar, short
+  for dimmer and long for brighter. Each press moves the keyboard in 10%
+  steps, through T1Bridge when it offers the keyboard backlight and through
+  `brightnessctl` otherwise. The stock renderer is still one `leapfrog stock`
+  away.
+- Button groups now alternate between the theme's selection and accent fills
+  by position rather than by a fixed colour per control, so neighbouring
+  groups always stand apart. The Fn row alternates the same way.
+
 ## 0.2.2 — 2026-09-13
 
 - Kept the Touch Bar renderer alive through a cold boot. The T1 hardware can

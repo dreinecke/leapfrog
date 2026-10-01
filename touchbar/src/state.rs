@@ -12,6 +12,8 @@ use crate::theme::Theme;
 
 const CURRENT_STATE: &str = ".local/state/omarchy/current";
 const TOUCH_ID_STATE: &str = "/run/t1bridge/touch-id-state.json";
+const BACKLIGHTS: &str = "/sys/class/backlight";
+const LEDS: &str = "/sys/class/leds";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Snapshot {
@@ -22,6 +24,7 @@ pub struct Snapshot {
     pub volume: u8,
     pub audio_muted: bool,
     pub brightness: u8,
+    pub keyboard_backlight: u8,
 }
 
 pub struct VisualState {
@@ -72,6 +75,7 @@ impl Snapshot {
             volume,
             audio_muted,
             brightness: read_brightness(),
+            keyboard_backlight: read_keyboard_backlight(),
         }
     }
 }
@@ -202,26 +206,38 @@ fn read_playback() -> (String, bool) {
     (if playing { "PAUSE" } else { "PLAY" }.into(), true)
 }
 
+pub fn keyboard_backlight_device() -> Option<String> {
+    fs::read_dir(LEDS)
+        .ok()?
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .find(|name| name.contains("kbd_backlight"))
+}
+
 fn read_brightness() -> u8 {
-    let entries = match fs::read_dir("/sys/class/backlight") {
-        Ok(entries) => entries,
-        Err(_) => return 0,
+    let Ok(entries) = fs::read_dir(BACKLIGHTS) else {
+        return 0;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let current = fs::read_to_string(path.join("brightness"))
-            .ok()
-            .and_then(|value| value.trim().parse::<u64>().ok());
-        let maximum = fs::read_to_string(path.join("max_brightness"))
-            .ok()
-            .and_then(|value| value.trim().parse::<u64>().ok());
-        if let (Some(current), Some(maximum)) = (current, maximum)
-            && maximum > 0
-        {
-            return ((current * 100 + maximum / 2) / maximum).min(100) as u8;
-        }
-    }
-    0
+    entries
+        .flatten()
+        .find_map(|entry| brightness_percentage(&entry.path()))
+        .unwrap_or(0)
+}
+
+fn read_keyboard_backlight() -> u8 {
+    keyboard_backlight_device()
+        .and_then(|device| brightness_percentage(&Path::new(LEDS).join(device)))
+        .unwrap_or(0)
+}
+
+fn brightness_percentage(device: &Path) -> Option<u8> {
+    let current = read_number(&device.join("brightness"))?;
+    let maximum = read_number(&device.join("max_brightness")).filter(|maximum| *maximum > 0)?;
+    Some(((current * 100 + maximum / 2) / maximum).min(100) as u8)
+}
+
+fn read_number(path: &Path) -> Option<u64> {
+    fs::read_to_string(path).ok()?.trim().parse().ok()
 }
 
 #[cfg(test)]
@@ -234,5 +250,17 @@ mod tests {
             serde_json::from_str(r#"{"version":2,"pid":1,"state":"enrollment","progress":101}"#)
                 .unwrap();
         assert!(state.progress.is_some_and(|value| value > 100));
+    }
+
+    #[test]
+    fn brightness_percentage_rounds_to_the_nearest_step() {
+        let device = env::temp_dir().join(format!("leapfrog-touchbar-{}", std::process::id()));
+        fs::create_dir_all(&device).unwrap();
+        fs::write(device.join("brightness"), "26\n").unwrap();
+        fs::write(device.join("max_brightness"), "255\n").unwrap();
+        assert_eq!(brightness_percentage(&device), Some(10));
+        fs::write(device.join("max_brightness"), "0\n").unwrap();
+        assert_eq!(brightness_percentage(&device), None);
+        fs::remove_dir_all(&device).unwrap();
     }
 }

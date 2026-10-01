@@ -4,7 +4,10 @@ use fontdue::Font;
 use crate::{
     state::{TouchIdState, VisualState},
     theme::Color,
-    ui::{Action, Button, Rect, Tone, UiStatus, function_layout, normal_layout, touch_id_layout},
+    ui::{
+        Action, Backlight, Button, Fill, Label, Rect, UiStatus, function_layout, normal_layout,
+        touch_id_layout,
+    },
 };
 
 pub struct RenderedUi {
@@ -25,6 +28,36 @@ struct Canvas {
     width: u32,
     height: u32,
     pixels: Vec<u8>,
+}
+
+struct Capsule {
+    from: (f32, f32),
+    to: (f32, f32),
+    radius: f32,
+}
+
+impl Capsule {
+    fn horizontal(left: f32, right: f32, y: f32, radius: f32) -> Self {
+        Self {
+            from: (left, y),
+            to: (right, y),
+            radius,
+        }
+    }
+
+    fn distance(&self, (x, y): (f32, f32)) -> f32 {
+        let (from_x, from_y) = self.from;
+        let (to_x, to_y) = self.to;
+        let (run, rise) = (to_x - from_x, to_y - from_y);
+        let length_squared = run * run + rise * rise;
+        let along = if length_squared == 0.0 {
+            0.0
+        } else {
+            (((x - from_x) * run + (y - from_y) * rise) / length_squared).clamp(0.0, 1.0)
+        };
+        let (nearest_x, nearest_y) = (from_x + along * run, from_y + along * rise);
+        ((x - nearest_x).powi(2) + (y - nearest_y).powi(2)).sqrt() - self.radius
+    }
 }
 
 impl Canvas {
@@ -89,6 +122,49 @@ impl Canvas {
             for x in rect.x..right {
                 if rounded_contains(rect, radius, x, y) {
                     self.blend_pixel(x, y, color);
+                }
+            }
+        }
+    }
+
+    fn capsules(&mut self, capsules: &[Capsule], color: Color) {
+        let reach =
+            |capsule: &Capsule, pick: fn((f32, f32)) -> f32| [pick(capsule.from), pick(capsule.to)];
+        let mut left = f32::MAX;
+        let mut top = f32::MAX;
+        let mut right = f32::MIN;
+        let mut bottom = f32::MIN;
+        for capsule in capsules {
+            let margin = capsule.radius + 1.0;
+            for x in reach(capsule, |point| point.0) {
+                left = left.min(x - margin);
+                right = right.max(x + margin);
+            }
+            for y in reach(capsule, |point| point.1) {
+                top = top.min(y - margin);
+                bottom = bottom.max(y + margin);
+            }
+        }
+        if capsules.is_empty() {
+            return;
+        }
+        for y in top.max(0.0) as u32..=bottom.max(0.0) as u32 {
+            for x in left.max(0.0) as u32..=right.max(0.0) as u32 {
+                let point = (x as f32 + 0.5, y as f32 + 0.5);
+                let distance = capsules
+                    .iter()
+                    .map(|capsule| capsule.distance(point))
+                    .fold(f32::MAX, f32::min);
+                let coverage = (0.5 - distance).clamp(0.0, 1.0);
+                if coverage > 0.0 {
+                    self.blend_pixel(
+                        x,
+                        y,
+                        Color {
+                            a: (color.a as f32 * coverage).round() as u8,
+                            ..color
+                        },
+                    );
                 }
             }
         }
@@ -238,25 +314,57 @@ fn draw_buttons(
         let is_pressed = button
             .action
             .is_some_and(|action| pressed.contains(&action));
-        let base = tone_color(theme, button.tone);
-        let (fill, text_color) = accessible_colors(base, theme, button.muted, is_pressed);
+        let base = fill_color(theme, button.fill);
+        let (background, text_color) = accessible_colors(base, theme, button.muted, is_pressed);
         let border = base.mix(theme.light_foreground, 225);
-        canvas.rounded_rect(button.rect, 9, fill, border);
+        canvas.rounded_rect(button.rect, 9, background, border);
 
         let center_x = button.rect.x as f32 + button.rect.width as f32 / 2.0;
-        canvas.centered_text(
-            font,
-            &button.label,
-            if button.icon {
-                BUTTON_ICON_SIZE
-            } else {
-                BUTTON_FONT_SIZE
-            },
-            center_x,
-            button.rect.y as f32 + button.rect.height as f32 / 2.0,
-            text_color,
-        );
+        let center_y = button.rect.y as f32 + button.rect.height as f32 / 2.0;
+        match &button.label {
+            Label::Text(text) => {
+                canvas.centered_text(font, text, BUTTON_FONT_SIZE, center_x, center_y, text_color)
+            }
+            Label::Glyph(glyph) => canvas.centered_text(
+                font,
+                glyph,
+                BUTTON_ICON_SIZE,
+                center_x,
+                center_y,
+                text_color,
+            ),
+            Label::KeyboardBacklight(level) => canvas.capsules(
+                &keyboard_backlight_icon(*level, center_x, center_y),
+                text_color,
+            ),
+        }
     }
+}
+
+// The illumination keys on Apple keyboards: three rays over a dashed bar,
+// short rays for dimmer and long rays for brighter.
+fn keyboard_backlight_icon(level: Backlight, center_x: f32, center_y: f32) -> Vec<Capsule> {
+    let (ray_reach, ray_radius) = match level {
+        Backlight::Dim => (14.0, 1.35),
+        Backlight::Bright => (19.0, 1.55),
+    };
+    let bar_y = center_y + 7.5;
+    let bar_radius = 1.35;
+    let mut capsules = vec![
+        Capsule::horizontal(center_x - 12.2, center_x - 9.9, bar_y, bar_radius),
+        Capsule::horizontal(center_x - 4.7, center_x + 4.7, bar_y, bar_radius),
+        Capsule::horizontal(center_x + 9.9, center_x + 12.2, bar_y, bar_radius),
+    ];
+    let ray_start = 8.5;
+    for angle in [-42.0_f32, 0.0, 42.0] {
+        let (sin, cos) = angle.to_radians().sin_cos();
+        capsules.push(Capsule {
+            from: (center_x + ray_start * sin, bar_y - ray_start * cos),
+            to: (center_x + ray_reach * sin, bar_y - ray_reach * cos),
+            radius: ray_radius,
+        });
+    }
+    capsules
 }
 
 fn text_width(font: &Font, text: &str, size: f32) -> f32 {
@@ -315,11 +423,10 @@ fn color_distance_squared(first: Color, second: Color) -> u32 {
     (red * red + green * green + blue * blue) as u32
 }
 
-fn tone_color(theme: &crate::theme::Theme, tone: Tone) -> Color {
-    match tone {
-        Tone::Accent | Tone::Brightness | Tone::Audio => theme.selection,
-        Tone::Info => theme.accent,
-        Tone::Media | Tone::Danger => theme.accent,
+fn fill_color(theme: &crate::theme::Theme, fill: Fill) -> Color {
+    match fill {
+        Fill::Selection => theme.selection,
+        Fill::Accent => theme.accent,
     }
 }
 
@@ -366,12 +473,8 @@ mod tests {
     fn white_text_and_minimum_contrast_are_invariants() {
         let theme = crate::theme::Theme::default();
         for base in [
-            tone_color(&theme, Tone::Accent),
-            tone_color(&theme, Tone::Info),
-            tone_color(&theme, Tone::Media),
-            tone_color(&theme, Tone::Brightness),
-            tone_color(&theme, Tone::Audio),
-            tone_color(&theme, Tone::Danger),
+            fill_color(&theme, Fill::Selection),
+            fill_color(&theme, Fill::Accent),
             Color::rgb(0, 0, 0),
             Color::rgb(255, 255, 255),
             Color::rgb(255, 0, 0),
@@ -390,13 +493,13 @@ mod tests {
     }
 
     #[test]
-    fn button_tones_only_use_selection_and_accent_categories() {
-        let theme = crate::theme::Theme::default();
-        assert_eq!(tone_color(&theme, Tone::Accent), theme.selection);
-        assert_eq!(tone_color(&theme, Tone::Audio), theme.selection);
-        assert_eq!(tone_color(&theme, Tone::Info), theme.accent);
-        assert_eq!(tone_color(&theme, Tone::Media), theme.accent);
-        assert_eq!(tone_color(&theme, Tone::Brightness), theme.selection);
-        assert_eq!(tone_color(&theme, Tone::Danger), theme.accent);
+    fn capsules_are_solid_inside_and_absent_outside() {
+        let mut canvas = Canvas::solid(20, 20, BAR_BACKGROUND);
+        canvas.capsules(&[Capsule::horizontal(5.0, 15.0, 10.0, 2.0)], TEXT_COLOR);
+        let pixel = |x: usize, y: usize| canvas.pixels[(y * 20 + x) * 4];
+        assert_eq!(pixel(10, 10), 255);
+        assert_eq!(pixel(5, 10), 255);
+        assert_eq!(pixel(10, 16), 0);
+        assert_eq!(pixel(1, 10), 0);
     }
 }

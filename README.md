@@ -8,8 +8,8 @@ Leapfrog does not fork T1Bridge. The upstream packages provide the kernel
 drivers and hardware services; this repository contains the machine-facing
 parts built around them:
 
-- `touchbar/` — an Omarchy-themed Touch Bar renderer with media, brightness,
-  audio, Escape, Fn/F1–F12, and Touch ID feedback.
+- `touchbar/` — an Omarchy-themed Touch Bar renderer with media, display and
+  keyboard brightness, audio, Escape, Fn/F1–F12, and Touch ID feedback.
 - `camera/` — a stable virtual FaceTime camera for applications that cannot
   consume the T1 camera's native H.264 stream.
 - `lock/` — a lock-screen guard that uses Touch ID only while T1Bridge is

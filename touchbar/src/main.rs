@@ -17,7 +17,9 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use draw::{RenderedUi, render, save_png};
-use state::{TouchIdState, VisualState, home_dir, load_font, read_touch_id_state};
+use state::{
+    TouchIdState, VisualState, home_dir, keyboard_backlight_device, load_font, read_touch_id_state,
+};
 use t1bridge::{Brightness, Client, ClientError, Event, InputFrame, Key};
 use ui::{Action, Button, action_at};
 
@@ -29,10 +31,7 @@ const CONNECT_BACKOFF_LIMIT: Duration = Duration::from_secs(2);
 const HEALTHY_SESSION: Duration = Duration::from_secs(2);
 const SHORT_SESSION_LIMIT: u32 = 5;
 
-enum SessionEnd {
-    StockRendererSelected,
-    ConnectionLost,
-}
+struct ConnectionLost;
 
 struct App {
     visual: VisualState,
@@ -137,7 +136,7 @@ fn main() -> Result<()> {
         None | Some("run") => run_renderer(),
         Some("preview") => preview(args.get(1).map(PathBuf::from)),
         Some("select") => select_renderer(),
-        Some("stock") => stock_renderer(true),
+        Some("stock") => stock_renderer(),
         Some(other) => bail!("unknown command: {other} (use run, preview, select, or stock)"),
     }
 }
@@ -149,20 +148,16 @@ fn run_renderer() -> Result<()> {
         let dimensions = client.dimensions();
         let mut app = App::new(dimensions.width, dimensions.height)?;
         let started = Instant::now();
-        match run_session(&mut client, &mut app)? {
-            SessionEnd::StockRendererSelected => return stock_renderer(false),
-            SessionEnd::ConnectionLost => {
-                short_sessions = if started.elapsed() < HEALTHY_SESSION {
-                    short_sessions + 1
-                } else {
-                    0
-                };
-                if short_sessions >= SHORT_SESSION_LIMIT {
-                    bail!("the Touch Bar connection kept failing as soon as it opened");
-                }
-                eprintln!("t1-touchbar renderer: Touch Bar connection lost; reconnecting");
-            }
+        let ConnectionLost = run_session(&mut client, &mut app)?;
+        short_sessions = if started.elapsed() < HEALTHY_SESSION {
+            short_sessions + 1
+        } else {
+            0
+        };
+        if short_sessions >= SHORT_SESSION_LIMIT {
+            bail!("the Touch Bar connection kept failing as soon as it opened");
         }
+        eprintln!("t1-touchbar renderer: Touch Bar connection lost; reconnecting");
     }
 }
 
@@ -216,7 +211,7 @@ fn connect_with_retry() -> Result<Client> {
     }
 }
 
-fn run_session(client: &mut Client, app: &mut App) -> Result<SessionEnd> {
+fn run_session(client: &mut Client, app: &mut App) -> Result<ConnectionLost> {
     let dimensions = client.dimensions();
     let mut dirty = true;
     let mut next_system_refresh = Instant::now();
@@ -229,7 +224,7 @@ fn run_session(client: &mut Client, app: &mut App) -> Result<SessionEnd> {
             match client.submit_rgba(&rendered.pixels, dimensions.width, dimensions.height) {
                 Ok(submitted) => dirty = !submitted,
                 Err(error) if hardware_not_ready(&error) => {
-                    return Ok(SessionEnd::ConnectionLost);
+                    return Ok(ConnectionLost);
                 }
                 Err(error) => return Err(error).context("submit a Touch Bar frame"),
             }
@@ -242,7 +237,7 @@ fn run_session(client: &mut Client, app: &mut App) -> Result<SessionEnd> {
                 Ok(Some(event)) => event,
                 Ok(None) => break,
                 Err(error) if hardware_not_ready(&error) => {
-                    return Ok(SessionEnd::ConnectionLost);
+                    return Ok(ConnectionLost);
                 }
                 Err(error) => return Err(error).context("receive a Touch Bar event"),
             };
@@ -252,10 +247,9 @@ fn run_session(client: &mut Client, app: &mut App) -> Result<SessionEnd> {
                     dirty |= input_changed;
                     for action in actions {
                         match perform_action(action, app, client) {
-                            Ok(true) => return Ok(SessionEnd::StockRendererSelected),
-                            Ok(false) => dirty = true,
+                            Ok(()) => dirty = true,
                             Err(error) if connection_lost(&error) => {
-                                return Ok(SessionEnd::ConnectionLost);
+                                return Ok(ConnectionLost);
                             }
                             Err(error) => return Err(error),
                         }
@@ -280,7 +274,7 @@ fn run_session(client: &mut Client, app: &mut App) -> Result<SessionEnd> {
     }
 }
 
-fn perform_action(action: Action, app: &mut App, client: &mut Client) -> Result<bool> {
+fn perform_action(action: Action, app: &mut App, client: &mut Client) -> Result<()> {
     match action {
         Action::Escape => client.tap_keys(&[Key::Escape])?,
         Action::Function(number) => client.tap_keys(&[function_key(number)?])?,
@@ -302,6 +296,21 @@ fn perform_action(action: Action, app: &mut App, client: &mut Client) -> Result<
             }
             app.visual.snapshot.brightness = target;
         }
+        Action::KeyboardBacklightDown | Action::KeyboardBacklightUp => {
+            let current = app.visual.snapshot.keyboard_backlight;
+            let target = if action == Action::KeyboardBacklightDown {
+                current.saturating_sub(10)
+            } else {
+                current.saturating_add(10).min(100)
+            };
+            if client.capabilities().keyboard_backlight {
+                client.set_brightness(Brightness::Keyboard, target)?;
+            } else if let Some(device) = keyboard_backlight_device() {
+                let value = format!("{target}%");
+                run_quiet("brightnessctl", &["-d", &device, "set", &value]);
+            }
+            app.visual.snapshot.keyboard_backlight = target;
+        }
         Action::ToggleMute => {
             run_quiet("wpctl", &["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]);
             app.visual.snapshot.audio_muted = !app.visual.snapshot.audio_muted;
@@ -322,9 +331,8 @@ fn perform_action(action: Action, app: &mut App, client: &mut Client) -> Result<
         }
         Action::FnToggle => app.sticky_fn = !app.sticky_fn,
         Action::CancelTouchId => client.cancel_touch_id()?,
-        Action::StockRenderer => return Ok(true),
     }
-    Ok(false)
+    Ok(())
 }
 
 fn function_key(number: u8) -> Result<Key> {
@@ -411,7 +419,7 @@ fn select_renderer() -> Result<()> {
     Ok(())
 }
 
-fn stock_renderer(restart: bool) -> Result<()> {
+fn stock_renderer() -> Result<()> {
     let config = home_dir()?.join(".config/t1bridge");
     let renderer = config.join("renderer");
     let previous = config.join("renderer.previous");
@@ -421,10 +429,7 @@ fn stock_renderer(restart: bool) -> Result<()> {
     if fs::symlink_metadata(&previous).is_ok() {
         fs::rename(&previous, &renderer).context("restore previous renderer selection")?;
     }
-    if restart {
-        restart_touchbar()?;
-    }
-    Ok(())
+    restart_touchbar()
 }
 
 fn restart_touchbar() -> Result<()> {
